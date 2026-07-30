@@ -216,3 +216,29 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Data files
+data/raw/
+data/processed/
+
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Data
+data/raw/
+data/processed/
+
+# Keep crosswalk
+!data/external/
+!data/external/municipality_crosswalk.csv
