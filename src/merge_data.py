@@ -1,111 +1,106 @@
 """
-Merge spatial and demographic datasets.
+Merge territorial indicators with demographic and education data.
 """
 
 from pathlib import Path
 
-import geopandas as gpd
 import pandas as pd
-
-from src.logger import get_logger
-
-
-logger = get_logger(__name__)
+import numpy as np
+import logging
 
 
-MUNICIPAL_FILE = Path(
-    "data/processed/municipal_indicators.parquet"
+# -------------------------
+# Paths
+# -------------------------
+
+INDICATORS = Path("data/processed/municipal_indicators.parquet")
+
+POPULATION = Path("data/raw/demographics/population.csv")
+
+EDUCATION = Path("data/processed/education_indicators.csv")
+
+OUTPUT = Path("data/processed/territorial_dataset.parquet")
+
+
+# -------------------------
+# Logging
+# -------------------------
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-POPULATION_FILE = Path(
-    "data/raw/demographics/population.csv"
-)
 
-OUTPUT_FILE = Path(
-    "data/processed/territorial_dataset.parquet"
-)
-
-
-def load_data():
-
-    logger.info("Loading municipal indicators.")
-
-    municipalities = gpd.read_parquet(
-        MUNICIPAL_FILE
-    )
-
-    logger.info("Loading population data.")
-
-    population = pd.read_csv(
-        POPULATION_FILE,
-        dtype={
-            "municipality_code": str
-        }
-    )
-
-    return municipalities, population
-
-
-def merge_population(
-    municipalities,
-    population
-):
-
-    logger.info("Merging population.")
-
-    gdf = municipalities.merge(
-        population,
-        on="municipality_code",
-        how="left"
-    )
-
-    return gdf
-
-
-def create_density(gdf):
-
-    logger.info("Creating population density.")
-
-    gdf["population_density"] = (
-        gdf["population"]
-        /
-        gdf["area_km2"]
-    )
-
-    return gdf
-
-
-def save_dataset(gdf):
-
-    logger.info("Saving territorial dataset.")
-
-    gdf.to_parquet(
-        OUTPUT_FILE,
-        engine="pyarrow",
-        compression="snappy"
-    )
+# -------------------------
+# Main pipeline
+# -------------------------
 
 
 def main():
 
-    municipalities, population = load_data()
+    logging.info("Loading municipal indicators.")
 
-    gdf = merge_population(
-        municipalities,
-        population
+    df = pd.read_parquet(INDICATORS)
+
+    logging.info(f"Municipal indicators loaded: {len(df)}")
+
+    # -------------------------
+    # Population
+    # -------------------------
+
+    logging.info("Loading population data.")
+
+    population = pd.read_csv(POPULATION, dtype={"municipality_code": str})
+
+    population["municipality_code"] = population["municipality_code"].str.zfill(11)
+
+    logging.info("Merging population.")
+
+    df = df.merge(
+        population[["municipality_code", "population"]],
+        on="municipality_code",
+        how="left",
     )
 
-    gdf = create_density(
-        gdf
-    )
+    # -------------------------
+    # Education
+    # -------------------------
 
-    save_dataset(
-        gdf
-    )
+    logging.info("Loading education indicators.")
 
-    logger.info(
-        "Territorial dataset created successfully."
-    )
+    education = pd.read_csv(EDUCATION, dtype={"municipality_code": str})
+
+    education["municipality_code"] = education["municipality_code"].str.zfill(11)
+
+    logging.info("Merging education.")
+
+    df = df.merge(education, on="municipality_code", how="left")
+
+    # -------------------------
+    # Derived indicators
+    # -------------------------
+
+    logging.info("Creating population density.")
+
+    df["population_density"] = df["population"] / df["area_km2"]
+
+    df["log_population"] = np.log1p(df["population"])
+
+    # -------------------------
+    # Save
+    # -------------------------
+
+    logging.info("Saving territorial dataset.")
+
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+
+    df.to_parquet(OUTPUT, index=False)
+
+    logging.info("Territorial dataset created successfully.")
+
+    logging.info(f"Rows: {len(df)}")
+
+    logging.info(f"Columns: {len(df.columns)}")
 
 
 if __name__ == "__main__":

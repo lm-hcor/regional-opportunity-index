@@ -8,70 +8,64 @@ import geopandas as gpd
 import pandas as pd
 
 
-INPUT = Path("data/processed/municipalities.parquet")
+IGN_FILE = Path("data/raw/boundaries/municipalities.gpkg")
 
 OUTPUT = Path("data/external/municipality_crosswalk.csv")
+
+LAYER = "recintos_municipales_inspire_peninbal_etrs89"
 
 
 def build_crosswalk():
 
-    print("Loading municipalities")
+    print("Loading IGN municipalities")
 
-    municipalities = gpd.read_parquet(INPUT)
+    gdf = gpd.read_file(IGN_FILE, layer=LAYER)
 
-    crosswalk = municipalities[
-        [
-            "municipality_code",
-            "municipality_name",
-            "nuts3_code",
-        ]
-    ].copy()
+    crosswalk = gdf[["NATCODE", "NAMEUNIT", "CODNUT3"]].copy()
+
+    crosswalk = crosswalk.rename(
+        columns={
+            "NATCODE": "municipality_code",
+            "NAMEUNIT": "municipality_name",
+            "CODNUT3": "nuts3_code",
+        }
+    )
 
     print("Creating INE codes")
 
-    # Ensure IGN code is string
-    crosswalk["municipality_code"] = (
-        crosswalk["municipality_code"].astype(str).str.strip()
+    # IGN NATCODE structure:
+    #
+    # ES.IGN.BDDAE removed
+    #
+    # 34 01 04 001
+    #
+    # province = chars 2-4
+    # municipality = last 3
+
+    crosswalk["province_code"] = crosswalk["municipality_code"].str[2:4].str.zfill(2)
+
+    crosswalk["municipality_number"] = (
+        crosswalk["municipality_code"].str[-3:].str.zfill(3)
     )
 
-    # Extract province and municipality codes
-    crosswalk["province_code"] = crosswalk["municipality_code"].str[2:4]
-
-    crosswalk["municipality_local_code"] = crosswalk["municipality_code"].str[6:]
-
-    # Build INE municipality code
     crosswalk["ine_code"] = (
-        crosswalk["province_code"] + crosswalk["municipality_local_code"]
+        crosswalk["province_code"] + crosswalk["municipality_number"]
     )
 
-    # Keep leading zeros
-    crosswalk["ine_code"] = crosswalk["ine_code"].astype(str).str.zfill(7)
-
-    # Remove auxiliary columns
     crosswalk = crosswalk[
-        [
-            "municipality_code",
-            "ine_code",
-            "municipality_name",
-            "nuts3_code",
-        ]
+        ["municipality_code", "ine_code", "municipality_name", "nuts3_code"]
     ]
 
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    # eliminar registros especiales
+    crosswalk = crosswalk[crosswalk["municipality_code"].notna()]
 
     crosswalk.to_csv(OUTPUT, index=False, encoding="utf-8")
 
     print(f"Saved: {OUTPUT}")
-
     print(f"Municipalities: {len(crosswalk)}")
 
     print(crosswalk.head())
 
 
-def main():
-
-    build_crosswalk()
-
-
 if __name__ == "__main__":
-    main()
+    build_crosswalk()

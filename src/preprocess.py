@@ -31,20 +31,8 @@ OUTPUT_FILE = (
 def find_municipal_layer(
     file_path: Path,
 ) -> str:
-    """
-    Find the municipality polygon layer.
 
-    Args:
-        file_path:
-            GeoPackage path.
-
-    Returns:
-        Layer name.
-    """
-
-    layers = gpd.list_layers(
-        file_path,
-    )
+    layers = gpd.list_layers(file_path)
 
     logger.info(
         "Available layers: %s",
@@ -53,21 +41,17 @@ def find_municipal_layer(
 
     for layer in layers.name:
 
-        gdf = gpd.read_file(
+        sample = gpd.read_file(
             file_path,
             layer=layer,
             rows=1,
         )
 
-        geometry_type = (
-            gdf.geometry.iloc[0]
-            .geom_type
-        )
-
-        if geometry_type in (
+        if sample.geometry.iloc[0].geom_type in (
             "Polygon",
             "MultiPolygon",
         ):
+
             logger.info(
                 "Selected polygon layer: %s",
                 layer,
@@ -83,16 +67,6 @@ def find_municipal_layer(
 def load_boundaries(
     file_path: Path,
 ) -> gpd.GeoDataFrame:
-    """
-    Load municipality polygons.
-
-    Args:
-        file_path:
-            GeoPackage path.
-
-    Returns:
-        Municipal polygons.
-    """
 
     layer = find_municipal_layer(
         file_path,
@@ -103,22 +77,17 @@ def load_boundaries(
         layer=layer,
     )
 
+    logger.info(
+        "Municipalities loaded: %s",
+        len(gdf),
+    )
+
     return gdf
 
 
 def clean_column_names(
     gdf: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
-    """
-    Standardize geographic variable names.
-
-    Args:
-        gdf:
-            Input GeoDataFrame.
-
-    Returns:
-        Clean GeoDataFrame.
-    """
 
     gdf.columns = (
         gdf.columns
@@ -135,8 +104,101 @@ def clean_column_names(
         "natcode": "municipality_code",
     }
 
-    gdf = gdf.rename(
+    return gdf.rename(
         columns=rename_map,
+    )
+
+
+def remove_invalid_records(
+    gdf: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+
+    logger.info(
+        "Cleaning municipality codes."
+    )
+
+    before = len(gdf)
+
+    gdf = gdf[
+        gdf["municipality_code"].notna()
+    ]
+
+
+    logger.info(
+        "Removed invalid municipalities: %s",
+        before - len(gdf),
+    )
+
+    return gdf
+
+
+def remove_non_municipal_entities(
+    gdf: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+
+    logger.info(
+        "Removing non-municipal entities."
+    )
+
+    invalid_entities = [
+        "COMUNIDAD DE BASCUÑANA Y VILORIA DE RIOJA",
+        "LEDANÍA DE HACINAS, SALAS DE LOS INFANTES Y VILLANUEVA DE CARAZO",
+        "VALLE DE LAS VENADAS",
+        "COMUNIDAD DE TARDAJOS Y RABÉ DE LAS CALZADAS",
+        "COMUNIDAD DE VILVIESTRE DEL PINAR Y PALACIOS DE LA SIERRA",
+        "PEÑÓN DE ALHUCEMAS",
+        "ISLA DEL PEREJIL",
+        "PEÑÓN DE VÉLEZ DE LA GOMERA",
+        "ISLAS CHAFARINAS",
+        "ISLAS ALHUCEMAS",
+        "PARZONERÍA GENERAL DE GUIPÚZCOA Y ÁLAVA",
+        "NO PERTENECE",
+    ]
+
+    before = len(gdf)
+
+    gdf = gdf[
+        ~gdf["municipality_name"]
+        .str.upper()
+        .isin(invalid_entities)
+    ]
+
+    logger.info(
+        "Removed non-municipal entities: %s",
+        before - len(gdf),
+    )
+
+    return gdf
+
+
+def remove_duplicate_municipalities(
+    gdf: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+
+    """
+    Remove duplicated IGN municipality codes.
+
+    IGN may contain bilingual names for the same municipality.
+    """
+
+    logger.info(
+        "Removing duplicate municipalities."
+    )
+
+    before = len(gdf)
+
+    gdf = (
+        gdf
+        .drop_duplicates(
+            subset=["municipality_code"],
+            keep="first",
+        )
+    )
+
+
+    logger.info(
+        "Removed duplicate municipalities: %s",
+        before - len(gdf),
     )
 
     return gdf
@@ -145,9 +207,6 @@ def clean_column_names(
 def validate_geometries(
     gdf: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
-    """
-    Validate geometries.
-    """
 
     invalid = (
         (~gdf.geometry.is_valid)
@@ -159,7 +218,8 @@ def validate_geometries(
         invalid,
     )
 
-    if invalid > 0:
+    if invalid:
+
         gdf.geometry = (
             gdf.geometry
             .buffer(0)
@@ -167,57 +227,44 @@ def validate_geometries(
 
     return gdf
 
+
 def add_spatial_features(
     gdf: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
-    """
-    Add spatial analytical features.
-
-    Args:
-        gdf:
-            Municipal polygons.
-
-    Returns:
-        Enhanced GeoDataFrame.
-    """
 
     projected = gdf.to_crs(
         "EPSG:25830",
     )
 
     gdf["area_km2"] = (
-        projected
-        .geometry
-        .area
-        / 1_000_000
+        projected.geometry.area
+        /
+        1_000_000
     )
 
     centroids = (
-        projected
-        .geometry
+        projected.geometry
         .centroid
         .to_crs("EPSG:4326")
     )
 
-    gdf["longitude"] = (
-        centroids.x
-    )
-
-    gdf["latitude"] = (
-        centroids.y
-    )
+    gdf["longitude"] = centroids.x
+    gdf["latitude"] = centroids.y
 
     return gdf
+
 
 def save_dataset(
     gdf: gpd.GeoDataFrame,
 ) -> None:
-    """
-    Save processed dataset.
-    """
 
     logger.info(
         "Saving processed municipalities."
+    )
+
+    OUTPUT_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
     gdf.to_parquet(
@@ -225,10 +272,7 @@ def save_dataset(
     )
 
 
-def main() -> None:
-    """
-    Execute preprocessing pipeline.
-    """
+def main():
 
     logger.info(
         "Starting boundary preprocessing."
@@ -242,17 +286,42 @@ def main() -> None:
         gdf,
     )
 
+    gdf = remove_invalid_records(
+        gdf,
+    )
+
+    gdf = remove_non_municipal_entities(
+        gdf,
+    )
+
+    gdf = remove_duplicate_municipalities(
+        gdf,
+    )
+
     gdf = validate_geometries(
         gdf,
     )
 
     gdf = add_spatial_features(
-    gdf,
+        gdf,
     )
+
+
+    logger.info(
+        "Final municipalities: %s",
+        len(gdf),
+    )
+
+    logger.info(
+        "Unique municipality codes: %s",
+        gdf["municipality_code"].nunique(),
+    )
+
 
     save_dataset(
         gdf,
     )
+
 
     logger.info(
         "Preprocessing completed."
